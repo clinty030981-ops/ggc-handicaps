@@ -1,12 +1,12 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const DEFAULT_PAR = "72";
 const CLUB_CODE = "GGC2026";
 const STORAGE_KEY = "ggc_handicaps_local_v1";
 
-const SUPABASE_URL = "https://bhkpncdqbpsqnsrqjaye.supabase.co";
-const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEYsb_publishable_HAp6q8y6Oo5VIxg9we9jGQ_J-75mYJU";
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 type ScoreEntry = {
   id: string;
@@ -116,13 +116,13 @@ const seededPlayers: Player[] = [
 ];
 
 function getSupabaseClient() {
-  if (
-    !SUPABASE_URL.startsWith("https://") ||
-    SUPABASE_URL.includes("YOUR-PROJECT") ||
-    SUPABASE_ANON_KEY === "YOUR_SUPABASE_ANON_KEY"
-  ) {
-    return null;
-  }
+if (
+  !SUPABASE_URL ||
+  !SUPABASE_ANON_KEY ||
+  !SUPABASE_URL.startsWith("https://")
+) {
+  return null;
+}
 
   return createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 }
