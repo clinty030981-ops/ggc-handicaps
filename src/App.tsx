@@ -68,16 +68,6 @@ function calculateAverageScore(scoreHistory: ScoreEntry[]) {
   );
 }
 
-function calculateTrend(scoreHistory: ScoreEntry[]) {
-  if (scoreHistory.length < 2) return "No trend yet";
-
-  const latest = toNumber(scoreHistory[0].score);
-  const previous = toNumber(scoreHistory[1].score);
-
-  if (latest < previous) return "Improving";
-  if (latest > previous) return "Declining";
-  return "Stable";
-}
 
 function makeScoreEntry(
   score = "",
@@ -206,7 +196,7 @@ export default function App() {
         handicap: calc ? calc.newHandicap : toNumber(player.currentHandicap),
         roundsUsed: calc ? calc.roundsUsed : 0,
         averageScore: calculateAverageScore(player.scoreHistory),
-        trend: calculateTrend(player.scoreHistory),
+        
       };
     })
     .sort((a, b) => a.handicap - b.handicap);
@@ -391,7 +381,7 @@ export default function App() {
               {index + 1}. {row.name} — Handicap {row.handicap}
             </div>
             <div style={{ fontSize: 13, color: "#666" }}>
-              Avg score: {row.averageScore ? row.averageScore.toFixed(2) : "-"} | {row.roundsUsed} rounds | Trend: {row.trend}
+              Avg score: {row.averageScore ? row.averageScore.toFixed(2) : "-"} | {row.roundsUsed} rounds 
             </div>
           </div>
         ))}
