@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const DEFAULT_PAR = "72";
 const CLUB_CODE = "GGC2026";
-const STORAGE_KEY = "ggc_handicaps_local_v1";
+const STORAGE_KEY = "ggc_handicaps_local_v2";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -20,7 +20,6 @@ type Player = {
   id: string;
   name: string;
   currentHandicap: string;
-  gameCount: "1" | "2";
   scoreInput: string;
   parInput: string;
   courseInput: string;
@@ -37,20 +36,17 @@ function roundWhole(value: number) {
   return Math.round(value);
 }
 
-function calculateHandicapFromRecentScores(
+function calculateHandicapFromAllScores(
   currentHandicap: number,
-  recentScores: { score: number; par: number }[],
-  gameCount: "1" | "2"
+  allScores: { score: number; par: number }[]
 ) {
-  const roundsToUse = gameCount === "2" ? 2 : 1;
-  const selected = recentScores.slice(0, roundsToUse);
-
-  if (selected.length === 0) return null;
+  if (allScores.length === 0) return null;
 
   const averageGross =
-    selected.reduce((sum, item) => sum + item.score, 0) / selected.length;
+    allScores.reduce((sum, item) => sum + item.score, 0) / allScores.length;
+
   const averagePar =
-    selected.reduce((sum, item) => sum + item.par, 0) / selected.length;
+    allScores.reduce((sum, item) => sum + item.par, 0) / allScores.length;
 
   const scoreToPar = averageGross - averagePar;
   const newHandicap = roundWhole((currentHandicap + scoreToPar) / 2);
@@ -60,11 +56,16 @@ function calculateHandicapFromRecentScores(
     averagePar,
     scoreToPar,
     newHandicap,
-    roundsUsed: selected.length,
+    roundsUsed: allScores.length,
   };
 }
 
-function makeScoreEntry(score = "", par = DEFAULT_PAR, date = "", course = ""): ScoreEntry {
+function makeScoreEntry(
+  score = "",
+  par = DEFAULT_PAR,
+  date = "",
+  course = ""
+): ScoreEntry {
   return {
     id: crypto.randomUUID(),
     score,
@@ -82,14 +83,18 @@ function createPlayer(
 ): Player {
   const history: ScoreEntry[] = [];
 
-  if (copperleaf) history.push(makeScoreEntry(copperleaf, DEFAULT_PAR, "", "Copperleaf"));
-  if (ruimsig) history.push(makeScoreEntry(ruimsig, DEFAULT_PAR, "", "Ruimsig"));
+  if (copperleaf) {
+    history.push(makeScoreEntry(copperleaf, DEFAULT_PAR, "", "Copperleaf"));
+  }
+
+  if (ruimsig) {
+    history.push(makeScoreEntry(ruimsig, DEFAULT_PAR, "", "Ruimsig"));
+  }
 
   return {
     id: crypto.randomUUID(),
     name,
     currentHandicap,
-    gameCount: history.length >= 2 ? "2" : "1",
     scoreInput: "",
     parInput: DEFAULT_PAR,
     courseInput: "",
@@ -116,22 +121,24 @@ const seededPlayers: Player[] = [
 ];
 
 function getSupabaseClient() {
-if (
-  !SUPABASE_URL ||
-  !SUPABASE_ANON_KEY ||
-  !SUPABASE_URL.startsWith("https://")
-) {
-  return null;
-}
+  if (
+    !SUPABASE_URL ||
+    !SUPABASE_ANON_KEY ||
+    !SUPABASE_URL.startsWith("https://")
+  ) {
+    return null;
+  }
 
   return createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 }
 
 export default function App() {
   const [players, setPlayers] = useState<Player[]>(seededPlayers);
-  const [selectedPlayerId, setSelectedPlayerId] = useState<string>(seededPlayers[0]?.id || "");
-  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedPlayerId, setSelectedPlayerId] = useState<string>(
+    seededPlayers[0]?.id || ""
+  );
   const [syncMessage, setSyncMessage] = useState("Local mode");
+
   const supabase = useMemo(() => getSupabaseClient(), []);
 
   useEffect(() => {
@@ -144,7 +151,7 @@ export default function App() {
           setSelectedPlayerId(parsed[0]?.id || "");
         }
       } catch {
-        // ignore bad local storage
+        // ignore invalid local storage
       }
     }
   }, []);
@@ -159,28 +166,24 @@ export default function App() {
     }
   }, [supabase]);
 
-  const filteredPlayers = players.filter((p) =>
-    p.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
   const selectedPlayer =
-    players.find((p) => p.id === selectedPlayerId) || filteredPlayers[0] || null;
+    players.find((p) => p.id === selectedPlayerId) || players[0] || null;
 
   const leaderboard = [...players]
     .map((player) => {
-      const calc = calculateHandicapFromRecentScores(
+      const calc = calculateHandicapFromAllScores(
         toNumber(player.currentHandicap),
         player.scoreHistory.map((s) => ({
           score: toNumber(s.score),
           par: toNumber(s.par || DEFAULT_PAR),
-        })),
-        player.gameCount
+        }))
       );
 
       return {
         id: player.id,
         name: player.name,
         handicap: calc ? calc.newHandicap : toNumber(player.currentHandicap),
+        roundsUsed: calc ? calc.roundsUsed : 0,
       };
     })
     .sort((a, b) => a.handicap - b.handicap);
@@ -190,8 +193,7 @@ export default function App() {
   }
 
   function saveRound() {
-    if (!selectedPlayer) return;
-    if (!selectedPlayer.scoreInput) return;
+    if (!selectedPlayer || !selectedPlayer.scoreInput) return;
 
     const newEntry = makeScoreEntry(
       selectedPlayer.scoreInput,
@@ -202,13 +204,12 @@ export default function App() {
 
     const updatedHistory = [newEntry, ...selectedPlayer.scoreHistory];
 
-    const recalculated = calculateHandicapFromRecentScores(
+    const recalculated = calculateHandicapFromAllScores(
       toNumber(selectedPlayer.currentHandicap),
       updatedHistory.map((entry) => ({
         score: toNumber(entry.score),
         par: toNumber(entry.par || DEFAULT_PAR),
-      })),
-      selectedPlayer.gameCount
+      }))
     );
 
     updatePlayer(selectedPlayer.id, {
@@ -225,8 +226,24 @@ export default function App() {
 
   function removeRound(roundId: string) {
     if (!selectedPlayer) return;
+
+    const updatedHistory = selectedPlayer.scoreHistory.filter(
+      (r) => r.id !== roundId
+    );
+
+    const recalculated = calculateHandicapFromAllScores(
+      toNumber(selectedPlayer.currentHandicap),
+      updatedHistory.map((entry) => ({
+        score: toNumber(entry.score),
+        par: toNumber(entry.par || DEFAULT_PAR),
+      }))
+    );
+
     updatePlayer(selectedPlayer.id, {
-      scoreHistory: selectedPlayer.scoreHistory.filter((r) => r.id !== roundId),
+      currentHandicap: recalculated
+        ? String(recalculated.newHandicap)
+        : selectedPlayer.currentHandicap,
+      scoreHistory: updatedHistory,
     });
   }
 
@@ -235,6 +252,16 @@ export default function App() {
     setSelectedPlayerId(seededPlayers[0]?.id || "");
     localStorage.removeItem(STORAGE_KEY);
   }
+
+  const selectedPlayerCalc = selectedPlayer
+    ? calculateHandicapFromAllScores(
+        toNumber(selectedPlayer.currentHandicap),
+        selectedPlayer.scoreHistory.map((entry) => ({
+          score: toNumber(entry.score),
+          par: toNumber(entry.par || DEFAULT_PAR),
+        }))
+      )
+    : null;
 
   return (
     <div
@@ -249,40 +276,78 @@ export default function App() {
       <p>Club code: {CLUB_CODE}</p>
       <p>{syncMessage}</p>
 
-      <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16, marginBottom: 16 }}>
-        <h2>Search and select player</h2>
-        <input
-          style={{ width: "100%", padding: 10, marginBottom: 10 }}
-          placeholder="Search by golfer name"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
-
+      <div
+        style={{
+          border: "1px solid #ddd",
+          borderRadius: 12,
+          padding: 16,
+          marginBottom: 16,
+        }}
+      >
+        <h2>Select player</h2>
         <select
           style={{ width: "100%", padding: 10 }}
           value={selectedPlayerId}
           onChange={(e) => setSelectedPlayerId(e.target.value)}
         >
-          {filteredPlayers.map((player) => (
-            <option key={player.id} value={player.id}>
-              {player.name}
-            </option>
-          ))}
+          {[...players]
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((player) => (
+              <option key={player.id} value={player.id}>
+                {player.name}
+              </option>
+            ))}
         </select>
       </div>
 
-      <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16, marginBottom: 16 }}>
+      <div
+        style={{
+          border: "1px solid #ddd",
+          borderRadius: 12,
+          padding: 16,
+          marginBottom: 16,
+        }}
+      >
         <h2>Leaderboard</h2>
         {leaderboard.map((row, index) => (
-          <div key={row.id} style={{ padding: "6px 0", borderBottom: "1px solid #eee" }}>
-            {index + 1}. {row.name} — Handicap {row.handicap}
+          <div
+            key={row.id}
+            style={{ padding: "6px 0", borderBottom: "1px solid #eee" }}
+          >
+            {index + 1}. {row.name} — Handicap {row.handicap} ({row.roundsUsed} rounds)
           </div>
         ))}
       </div>
 
       {selectedPlayer && (
-        <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16, marginBottom: 16 }}>
+        <div
+          style={{
+            border: "1px solid #ddd",
+            borderRadius: 12,
+            padding: 16,
+            marginBottom: 16,
+          }}
+        >
           <h2>{selectedPlayer.name}</h2>
+
+          <div style={{ marginBottom: 16 }}>
+            <strong>Formula used:</strong>
+            <div style={{ marginTop: 8 }}>
+              New Handicap = round((Current Handicap + (Average of all scores - Average par)) / 2)
+            </div>
+          </div>
+
+          {selectedPlayerCalc && (
+            <div style={{ marginBottom: 16 }}>
+              <div>Average gross: {selectedPlayerCalc.averageGross.toFixed(2)}</div>
+              <div>Average par: {selectedPlayerCalc.averagePar.toFixed(2)}</div>
+              <div>To par: {selectedPlayerCalc.scoreToPar.toFixed(2)}</div>
+              <div>Rounds used: {selectedPlayerCalc.roundsUsed}</div>
+              <div>
+                <strong>Calculated handicap: {selectedPlayerCalc.newHandicap}</strong>
+              </div>
+            </div>
+          )}
 
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
             <div>
@@ -292,25 +357,11 @@ export default function App() {
                 type="number"
                 value={selectedPlayer.currentHandicap}
                 onChange={(e) =>
-                  updatePlayer(selectedPlayer.id, { currentHandicap: e.target.value })
-                }
-              />
-            </div>
-
-            <div>
-              <label>Rounds used</label>
-              <select
-                style={{ width: "100%", padding: 10 }}
-                value={selectedPlayer.gameCount}
-                onChange={(e) =>
                   updatePlayer(selectedPlayer.id, {
-                    gameCount: e.target.value as "1" | "2",
+                    currentHandicap: e.target.value,
                   })
                 }
-              >
-                <option value="1">Use 1 score</option>
-                <option value="2">Use 2 scores</option>
-              </select>
+              />
             </div>
 
             <div>
@@ -320,7 +371,9 @@ export default function App() {
                 type="number"
                 value={selectedPlayer.scoreInput}
                 onChange={(e) =>
-                  updatePlayer(selectedPlayer.id, { scoreInput: e.target.value })
+                  updatePlayer(selectedPlayer.id, {
+                    scoreInput: e.target.value,
+                  })
                 }
               />
             </div>
@@ -332,7 +385,9 @@ export default function App() {
                 type="number"
                 value={selectedPlayer.parInput}
                 onChange={(e) =>
-                  updatePlayer(selectedPlayer.id, { parInput: e.target.value })
+                  updatePlayer(selectedPlayer.id, {
+                    parInput: e.target.value,
+                  })
                 }
               />
             </div>
@@ -343,7 +398,9 @@ export default function App() {
                 style={{ width: "100%", padding: 10 }}
                 value={selectedPlayer.courseInput}
                 onChange={(e) =>
-                  updatePlayer(selectedPlayer.id, { courseInput: e.target.value })
+                  updatePlayer(selectedPlayer.id, {
+                    courseInput: e.target.value,
+                  })
                 }
               />
             </div>
@@ -355,14 +412,19 @@ export default function App() {
                 type="date"
                 value={selectedPlayer.dateInput}
                 onChange={(e) =>
-                  updatePlayer(selectedPlayer.id, { dateInput: e.target.value })
+                  updatePlayer(selectedPlayer.id, {
+                    dateInput: e.target.value,
+                  })
                 }
               />
             </div>
           </div>
 
           <div style={{ marginTop: 16 }}>
-            <button onClick={saveRound} style={{ padding: "10px 16px", marginRight: 8 }}>
+            <button
+              onClick={saveRound}
+              style={{ padding: "10px 16px", marginRight: 8 }}
+            >
               Save round
             </button>
             <button onClick={resetPlayers} style={{ padding: "10px 16px" }}>
