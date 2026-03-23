@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const DEFAULT_PAR = "72";
 const CLUB_CODE = "GGC2026";
-const STORAGE_KEY = "ggc_handicaps_local_v2";
+const STORAGE_KEY = "ggc_handicaps_local_v3";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -58,6 +58,25 @@ function calculateHandicapFromAllScores(
     newHandicap,
     roundsUsed: allScores.length,
   };
+}
+
+function calculateAverageScore(scoreHistory: ScoreEntry[]) {
+  if (scoreHistory.length === 0) return null;
+  return (
+    scoreHistory.reduce((sum, entry) => sum + toNumber(entry.score), 0) /
+    scoreHistory.length
+  );
+}
+
+function calculateTrend(scoreHistory: ScoreEntry[]) {
+  if (scoreHistory.length < 2) return "No trend yet";
+
+  const latest = toNumber(scoreHistory[0].score);
+  const previous = toNumber(scoreHistory[1].score);
+
+  if (latest < previous) return "Improving";
+  if (latest > previous) return "Declining";
+  return "Stable";
 }
 
 function makeScoreEntry(
@@ -138,6 +157,8 @@ export default function App() {
     seededPlayers[0]?.id || ""
   );
   const [syncMessage, setSyncMessage] = useState("Local mode");
+  const [newGolferName, setNewGolferName] = useState("");
+  const [newGolferHandicap, setNewGolferHandicap] = useState("18");
 
   const supabase = useMemo(() => getSupabaseClient(), []);
 
@@ -184,12 +205,28 @@ export default function App() {
         name: player.name,
         handicap: calc ? calc.newHandicap : toNumber(player.currentHandicap),
         roundsUsed: calc ? calc.roundsUsed : 0,
+        averageScore: calculateAverageScore(player.scoreHistory),
+        trend: calculateTrend(player.scoreHistory),
       };
     })
     .sort((a, b) => a.handicap - b.handicap);
 
   function updatePlayer(id: string, updates: Partial<Player>) {
     setPlayers((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
+  }
+
+  function addGolfer() {
+    const name = newGolferName.trim();
+    if (!name) return;
+
+    const player = createPlayer(name.toUpperCase(), newGolferHandicap || "18", null, null);
+    setPlayers((prev) => {
+      const updated = [...prev, player].sort((a, b) => a.name.localeCompare(b.name));
+      return updated;
+    });
+    setSelectedPlayerId(player.id);
+    setNewGolferName("");
+    setNewGolferHandicap("18");
   }
 
   function saveRound() {
@@ -308,13 +345,54 @@ export default function App() {
           marginBottom: 16,
         }}
       >
+        <h2>Add new golfer</h2>
+        <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr auto" }}>
+          <div>
+            <label>Golfer name</label>
+            <input
+              style={{ width: "100%", padding: 10 }}
+              value={newGolferName}
+              onChange={(e) => setNewGolferName(e.target.value)}
+              placeholder="Enter golfer name"
+            />
+          </div>
+          <div>
+            <label>Starting handicap</label>
+            <input
+              style={{ width: "100%", padding: 10 }}
+              type="number"
+              value={newGolferHandicap}
+              onChange={(e) => setNewGolferHandicap(e.target.value)}
+            />
+          </div>
+          <div style={{ display: "flex", alignItems: "end" }}>
+            <button onClick={addGolfer} style={{ padding: "10px 16px", width: "100%" }}>
+              Add golfer
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          border: "1px solid #ddd",
+          borderRadius: 12,
+          padding: 16,
+          marginBottom: 16,
+        }}
+      >
         <h2>Leaderboard</h2>
         {leaderboard.map((row, index) => (
           <div
             key={row.id}
-            style={{ padding: "6px 0", borderBottom: "1px solid #eee" }}
+            style={{ padding: "8px 0", borderBottom: "1px solid #eee" }}
           >
-            {index + 1}. {row.name} — Handicap {row.handicap} ({row.roundsUsed} rounds)
+            <div>
+              {index + 1}. {row.name} — Handicap {row.handicap}
+            </div>
+            <div style={{ fontSize: 13, color: "#666" }}>
+              Avg score: {row.averageScore ? row.averageScore.toFixed(2) : "-"} | {row.roundsUsed} rounds | Trend: {row.trend}
+            </div>
           </div>
         ))}
       </div>
@@ -329,13 +407,6 @@ export default function App() {
           }}
         >
           <h2>{selectedPlayer.name}</h2>
-
-          <div style={{ marginBottom: 16 }}>
-            <strong>Formula used:</strong>
-            <div style={{ marginTop: 8 }}>
-              New Handicap = round((Current Handicap + (Average of all scores - Average par)) / 2)
-            </div>
-          </div>
 
           {selectedPlayerCalc && (
             <div style={{ marginBottom: 16 }}>
